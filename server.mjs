@@ -13,7 +13,14 @@
  *   POST /mcp  notification      → 202 empty
  *   GET/DELETE /mcp              → 405 (no server-initiated streams)
  *
+ * Two transports over the same dispatch (handleRpc), pick one:
+ *   HTTP (default) — the hosted endpoint the VPS runs.
+ *   stdio (--stdio) — newline-delimited JSON-RPC on stdin/stdout, for clients
+ *     that spawn the server locally. Logs go to stderr there: anything on
+ *     stdout that is not an MCP message corrupts the stream.
+ *
  * Run:  CASTLES_GEOJSON=/var/www/castlemap/castles.geojson PORT=8891 node server.mjs
+ *       CASTLES_GEOJSON=./castles.geojson node server.mjs --stdio
  */
 import { createServer } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
@@ -24,7 +31,11 @@ const DATA = process.env.CASTLES_GEOJSON || '/var/www/castlemap/castles.geojson'
 const SITE_URL = 'https://thecastlemap.com'
 const PROTOCOLS = new Set(['2025-06-18', '2025-03-26', '2024-11-05'])
 const LATEST = '2025-06-18'
-const VERSION = '1.0.1'
+const VERSION = '1.1.0'
+const STDIO = process.argv.includes('--stdio')
+
+// On stdio, stdout carries the protocol — every log line must go to stderr.
+const log = (...a) => (STDIO ? console.error(...a) : console.log(...a))
 
 // ---- Dataset (reload when the deployed file changes; stat at most 1/min) ---
 let castles = []
@@ -53,7 +64,7 @@ function loadData() {
       url,
     }
   })
-  console.log(`castlemap-mcp: loaded ${castles.length} castles from ${DATA}`)
+  log(`castlemap-mcp: loaded ${castles.length} castles from ${DATA}`)
 }
 function freshData() {
   const now = Date.now()
@@ -423,9 +434,58 @@ const server = createServer((req, res) => {
     const t0 = Date.now()
     const result = handleRpc(msg)
     const took = Date.now() - t0
-    console.log(`castlemap-mcp: ${msg.method}${msg.params?.name ? ' ' + msg.params.name : ''} (${took}ms)`)
+    log(`castlemap-mcp: ${msg.method}${msg.params?.name ? ' ' + msg.params.name : ''} (${took}ms)`)
     if (result && result.__rpcError) return send(res, 200, { jsonrpc: '2.0', error: result.__rpcError, id: msg.id })
     return send(res, 200, { jsonrpc: '2.0', result, id: msg.id })
   })
 })
-server.listen(PORT, HOST, () => console.log(`castlemap-mcp: listening on http://${HOST}:${PORT}/mcp`))
+// ---- stdio transport (newline-delimited JSON-RPC on stdin/stdout) -----------
+// Clients that spawn the server locally speak this instead of HTTP. Same
+// dispatch, same semantics: notifications and responses draw no reply at all
+// (the stdio equivalent of the 202 above).
+function writeStdio(msg) {
+  process.stdout.write(JSON.stringify(msg) + '\n')
+}
+function handleStdioLine(line) {
+  let msg
+  try {
+    msg = JSON.parse(line)
+  } catch {
+    return writeStdio({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null })
+  }
+  if (Array.isArray(msg))
+    return writeStdio({ jsonrpc: '2.0', error: { code: -32600, message: 'Batching is not supported (protocol 2025-06-18)' }, id: null })
+  if (!msg || msg.jsonrpc !== '2.0')
+    return writeStdio({ jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: null })
+
+  const hasId = msg.id !== undefined && msg.id !== null
+  const isNotification = typeof msg.method === 'string' && !hasId
+  const isResponse = msg.method === undefined && (msg.result !== undefined || msg.error !== undefined)
+  if (isNotification || isResponse) return
+  if (typeof msg.method !== 'string' || !hasId)
+    return writeStdio({ jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: null })
+
+  const t0 = Date.now()
+  const result = handleRpc(msg)
+  log(`castlemap-mcp: ${msg.method}${msg.params?.name ? ' ' + msg.params.name : ''} (${Date.now() - t0}ms)`)
+  if (result && result.__rpcError) return writeStdio({ jsonrpc: '2.0', error: result.__rpcError, id: msg.id })
+  writeStdio({ jsonrpc: '2.0', result, id: msg.id })
+}
+function serveStdio() {
+  let buf = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (chunk) => {
+    buf += chunk
+    let nl
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (line) handleStdioLine(line)
+    }
+  })
+  process.stdin.on('end', () => process.exit(0))
+  log(`castlemap-mcp: serving stdio (${castles.length} castles)`)
+}
+
+if (STDIO) serveStdio()
+else server.listen(PORT, HOST, () => log(`castlemap-mcp: listening on http://${HOST}:${PORT}/mcp`))
