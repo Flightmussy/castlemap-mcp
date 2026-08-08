@@ -78,7 +78,7 @@ wherever the data lives.
 
 ## Provenance
 
-Built by [Alban Zaja](https://thecastlemap.com) with AI assistance: the concept,
+Built by [flightmussy](https://thecastlemap.com) with AI assistance: the concept,
 direction and review are mine; much of the implementation was written with
 Claude. The underlying data is not generated — it comes from Wikidata, and every
 record is traceable to its Wikidata item.
