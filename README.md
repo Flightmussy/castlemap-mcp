@@ -53,7 +53,7 @@ The factual records are released as **CC0** and downloadable as GeoJSON and CSV
 from [thecastlemap.com/data](https://thecastlemap.com/data/) — also mirrored on
 [GitHub](https://github.com/Flightmussy/castlemap-dataset),
 [Hugging Face](https://huggingface.co/datasets/Flightmussy/castles-of-the-world),
-[Kaggle](https://www.kaggle.com/datasets/albanius/castles-of-the-world-2400-castles-and-palaces)
+[Kaggle](https://www.kaggle.com/datasets/flightmussy/castles-of-the-world)
 and [Zenodo](https://doi.org/10.5281/zenodo.21322360) (DOI
 `10.5281/zenodo.21322360`).
 
