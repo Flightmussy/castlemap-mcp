@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.thecastlemap/castles",
-  "description": "2,400 castles, fortresses & palaces: name search, nearby, fame ranking, statistics. No key, CC0.",
-  "version": "1.0.1",
+  "description": "7,044 castles, fortresses & palaces: name search, nearby, fame ranking, statistics. No key, CC0.",
+  "version": "1.0.2",
   "websiteUrl": "https://thecastlemap.com/data/",
   "remotes": [
     {
