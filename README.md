@@ -1,7 +1,7 @@
 # Castlemap MCP server
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for the
-Castlemap atlas: 7,044 castles, fortresses, palaces and ruins across 141 countries,
+Castlemap atlas: 7,738 castles, fortresses, palaces and ruins across 141 countries,
 with coordinates, founding dates, categories, fame ranking and Wikipedia
 summaries.
 
@@ -54,8 +54,8 @@ from [thecastlemap.com/data](https://thecastlemap.com/data/) — also mirrored o
 [GitHub](https://github.com/Flightmussy/castlemap-dataset),
 [Hugging Face](https://huggingface.co/datasets/Flightmussy/castles-of-the-world),
 [Kaggle](https://www.kaggle.com/datasets/flightmussy/castles-of-the-world)
-and [Zenodo](https://doi.org/10.5281/zenodo.21322360) (DOI
-`10.5281/zenodo.21322360`).
+and [Zenodo](https://doi.org/10.5281/zenodo.21322359) (concept DOI
+`10.5281/zenodo.21322359`, which always resolves to the newest version).
 
 ## Running it yourself
 
