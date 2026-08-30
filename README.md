@@ -1,7 +1,7 @@
 # Castlemap MCP server
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for the
-Castlemap atlas: 7,738 castles, fortresses, palaces and ruins across 141 countries,
+Castlemap atlas: 7,786 castles, fortresses, palaces and ruins across 141 countries,
 with coordinates, founding dates, categories, fame ranking and Wikipedia
 summaries.
 
