@@ -41,6 +41,14 @@ const log = (...a) => (STDIO ? console.error(...a) : console.log(...a))
 let castles = []
 let loadedMtime = 0
 let lastStat = 0
+// Facts the tool descriptions quote. Derived on every load, because a hand-written
+// one goes stale silently and an MCP client reads a description as ground truth:
+// search_castles advertised "2,400 castles" against a dataset of 5,793, the
+// instructions said 131 countries against 138, and top_castles named the Palace
+// of Versailles as rank 1 after the Chinese intake had put the Great Wall above it.
+let countryCount = 0
+let topFamous = null
+let topCountry = null
 function loadData() {
   const gj = JSON.parse(readFileSync(DATA, 'utf8'))
   castles = gj.features.map((f) => {
@@ -59,11 +67,22 @@ function loadData() {
       fame_rank: p.fame_rank,
       wikipedia: p.wikipedia,
       image: p.image,
+      // Commons photos are CC-licensed: most licences legally require reusers
+      // to name the photographer. The geojson has carried these since
+      // 2026-08-08; serving the photo URL without them made attribution
+      // impossible even for a client that wanted to comply.
+      image_by: p.image_by,
+      image_licence: p.image_licence,
       sitelinks: p.sitelinks,
       pageviews: p.pageviews,
       url,
     }
   })
+  const counts = new Map()
+  for (const c of castles) if (c.country) counts.set(c.country, (counts.get(c.country) ?? 0) + 1)
+  countryCount = counts.size
+  topCountry = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  topFamous = castles.find((c) => c.fame_rank === 1) ?? null
   log(`castlemap-mcp: loaded ${castles.length} castles from ${DATA}`)
 }
 function freshData() {
@@ -73,8 +92,13 @@ function freshData() {
   try {
     const m = statSync(DATA).mtimeMs
     if (m !== loadedMtime) {
-      loadedMtime = m
+      // Load FIRST, record the mtime only on success. The other order marked a
+      // failed reload (a deploy caught mid-write) as done, and the server then
+      // served the previous dataset forever — the mtime never changed again,
+      // so nothing ever retried. Now a failed load leaves loadedMtime alone
+      // and the next minute's stat tries again.
       loadData()
+      loadedMtime = m
     }
   } catch (e) {
     console.error('castlemap-mcp: stat/reload failed:', e.message)
@@ -94,7 +118,15 @@ function norm(s) {
 function matchesCountry(c, want) {
   if (!want) return true
   const w = norm(want)
-  return norm(c.country) === w || norm(c.iso) === w || norm(c.country).includes(w)
+  if (norm(c.country) === w || norm(c.iso) === w) return true
+  // Partial names match only at a WORD START. A bare substring test made the
+  // ISO codes the schemas invite poisonous: "US" matched aUStria and rUSsia,
+  // "Oman" matched rOMANia — top_castles({country:"Oman"}) answered ten
+  // Romanian landmarks before the first Omani one. Word-anchored, "korea"
+  // still finds South Korea, "czech" still finds Czechia, and "oman" can no
+  // longer hide inside another country's name.
+  const rx = new RegExp(`(?:^|\\s)${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+  return rx.test(norm(c.country))
 }
 function briefOf(c) {
   return {
@@ -112,7 +144,18 @@ function briefOf(c) {
   }
 }
 function fullOf(c) {
-  return { ...briefOf(c), image: c.image, wikidata_sitelinks: c.sitelinks, wikipedia_pageviews_365d: c.pageviews }
+  // wikipedia_pageviews_60d: the enrichment stores a 60-DAY sum across the
+  // landmark's largest language editions (since 2026-08-05). The field was
+  // named _365d and described as annual for four days — AI clients republish
+  // field names as facts, so the name must say exactly what the number is.
+  return {
+    ...briefOf(c),
+    image: c.image,
+    image_by: c.image_by,
+    image_licence: c.image_licence,
+    wikidata_sitelinks: c.sitelinks,
+    wikipedia_pageviews_60d: c.pageviews,
+  }
 }
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371
@@ -133,8 +176,8 @@ const TOOLS = [
   {
     name: 'search_castles',
     title: 'Search castles by name',
-    description:
-      'Search the atlas’s 2,400 castles, fortresses, palaces and ruins by name (accent- and case-insensitive substring match). Optionally filter by country (name or ISO code) and category. Results come best-match-first, then by fame; each has coordinates, founding century, fame rank and links to its atlas page and Wikipedia. If nothing matches, retry with a shorter fragment of the name.',
+    describe: () =>
+      `Search the atlas’s ${castles.length.toLocaleString('en-US')} castles, fortresses, palaces and ruins by name (accent- and case-insensitive substring match). Optionally filter by country (name or ISO code) and category. Results come best-match-first, then by fame; each has coordinates, founding century, fame rank and links to its atlas page and Wikipedia. If nothing matches, retry with a shorter fragment of the name.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -169,7 +212,7 @@ const TOOLS = [
     name: 'get_castle',
     title: 'Get one castle in full',
     description:
-      'Fetch one landmark’s full record by slug (preferred, e.g. "palace-of-versailles") or exact name: coordinates, founding year and century, worldwide fame rank, photo URL, Wikipedia link and its readership signals (Wikidata sitelinks, annual Wikipedia pageviews). Unsure of the slug? Call search_castles first.',
+      'Fetch one landmark’s full record by slug (preferred, e.g. "palace-of-versailles") or exact name: coordinates, founding year and century, worldwide fame rank, photo URL with photographer credit and licence, Wikipedia link and its readership signals (Wikidata sitelinks, Wikipedia pageviews over the last 60 days summed across its largest language editions). Unsure of the slug? Call search_castles first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -226,8 +269,8 @@ const TOOLS = [
   {
     name: 'top_castles',
     title: 'Most famous castles',
-    description:
-      'The most famous landmarks worldwide or in one country, ordered by Castlemap fame rank — a blend of Wikipedia language coverage and readership; rank 1 is the most famous (Palace of Versailles). The direct answer to "most famous castles in <country>"; filter by country and/or category.',
+    describe: () =>
+      `The most famous landmarks worldwide or in one country, ordered by Castlemap fame rank — a blend of Wikipedia coverage and readership; rank 1 is the most famous${topFamous ? ` (${topFamous.name})` : ''}. The direct answer to "most famous castles in <country>"; filter by country and/or category.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,8 +292,8 @@ const TOOLS = [
   {
     name: 'list_countries',
     title: 'Countries with castle counts',
-    description:
-      'Every country in the atlas with its landmark count, most first — answers "which country has the most castles" (France leads). Returns country name and ISO code per row; country pages are browsable from the countries_index URL.',
+    describe: () =>
+      `Every country in the atlas with its landmark count, most first — answers "which country has the most castles"${topCountry ? ` (${topCountry} leads)` : ''}. Returns country name and ISO code per row; country pages are browsable from the countries_index URL.`,
     inputSchema: { type: 'object', properties: {} },
     run() {
       // Group by country NAME — a record with a missing ISO must not split
@@ -341,6 +384,10 @@ const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]))
 // ---- JSON-RPC dispatch ------------------------------------------------------
 function handleRpc(msg) {
   const { method, params, id } = msg
+  // initialize and tools/list quote live counts, so they need the same freshness
+  // check tools/call has always had — otherwise a redeploy leaves every client
+  // that connected before it holding numbers from the previous dataset.
+  if (method === 'initialize' || method === 'tools/list') freshData()
   if (method === 'initialize') {
     const asked = params?.protocolVersion
     return {
@@ -348,8 +395,8 @@ function handleRpc(msg) {
       capabilities: { tools: {} },
       serverInfo: { name: 'castlemap', title: 'Castlemap — the world’s great castles', version: VERSION },
       instructions:
-        `Read-only tools over the Castlemap atlas: ${castles.length} curated castles, fortresses, palaces and ruins ` +
-        `across 131 countries (facts from Wikidata, CC0). Every result links its page on ${SITE_URL}. ` +
+        `Read-only tools over the Castlemap atlas: ${castles.length.toLocaleString('en-US')} curated castles, fortresses, palaces and ruins ` +
+        `across ${countryCount} countries (facts from Wikidata, CC0). Every result links its page on ${SITE_URL}. ` +
         `Use search_castles / get_castle for lookups, castles_near for geography (geocode the place first), ` +
         `top_castles for fame, get_statistics for aggregate claims (counts by country/century, oldest, extremes), ` +
         `list_countries for coverage and random_castle for discovery.`,
@@ -358,7 +405,13 @@ function handleRpc(msg) {
   if (method === 'ping') return {}
   if (method === 'tools/list') {
     return {
-      tools: TOOLS.map(({ name, title, description, inputSchema }) => ({ name, title, description, inputSchema })),
+      tools: TOOLS.map(({ name, title, description, describe, inputSchema }) => ({
+        name,
+        title,
+        // A tool that quotes a live count builds its description per call.
+        description: describe ? describe() : description,
+        inputSchema,
+      })),
     }
   }
   if (method === 'tools/call') {
@@ -399,20 +452,27 @@ const server = createServer((req, res) => {
   if (req.method !== 'POST')
     return send(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed — POST JSON-RPC to this endpoint' }, id: null }, { Allow: 'POST, OPTIONS' })
 
-  let body = ''
+  // Collect raw Buffers and decode ONCE at the end: `body += chunk` coerces
+  // each chunk to a string separately, and a multi-byte UTF-8 character split
+  // across a chunk boundary decodes as U+FFFD garbage — a parse error for the
+  // client on any request whose non-ASCII castle name straddles 64 KiB reads.
+  const chunks = []
+  let size = 0
   let overflow = false
   req.on('data', (chunk) => {
-    body += chunk
-    if (body.length > 65536) {
+    size += chunk.length
+    if (size > 65536) {
       overflow = true
       req.destroy()
+      return
     }
+    chunks.push(chunk)
   })
   req.on('end', () => {
     if (overflow) return
     let msg
     try {
-      msg = JSON.parse(body)
+      msg = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     } catch {
       return send(res, 400, { jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null })
     }
@@ -421,10 +481,13 @@ const server = createServer((req, res) => {
     if (!msg || msg.jsonrpc !== '2.0')
       return send(res, 400, { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: null })
 
-    // Requests carry an id + method; notifications have a method but no id;
-    // responses have result/error but no method. Per the streamable-http
-    // transport, notifications and responses get 202 with no body.
-    const hasId = msg.id !== undefined && msg.id !== null
+    // Requests carry an id + method; notifications have a method but NO id
+    // MEMBER; responses have result/error but no method. Per the streamable-
+    // http transport, notifications and responses get 202 with no body.
+    // A notification is the ABSENCE of the id member, not a null id: JSON-RPC
+    // 2.0 discourages `id: null` on requests but it is still a request, and
+    // answering it 202 left the client waiting on a response that never came.
+    const hasId = 'id' in msg
     const isNotification = typeof msg.method === 'string' && !hasId
     const isResponse = msg.method === undefined && (msg.result !== undefined || msg.error !== undefined)
     if (isNotification || isResponse) return send(res, 202, undefined)
@@ -458,7 +521,9 @@ function handleStdioLine(line) {
   if (!msg || msg.jsonrpc !== '2.0')
     return writeStdio({ jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: null })
 
-  const hasId = msg.id !== undefined && msg.id !== null
+  // Same id semantics as the HTTP transport: a notification is the absent id
+  // MEMBER; `id: null` is a (discouraged) request and gets a response.
+  const hasId = 'id' in msg
   const isNotification = typeof msg.method === 'string' && !hasId
   const isResponse = msg.method === undefined && (msg.result !== undefined || msg.error !== undefined)
   if (isNotification || isResponse) return
