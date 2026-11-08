@@ -1,7 +1,7 @@
 # Castlemap MCP server
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for the
-Castlemap atlas: 7,786 castles, fortresses, palaces and ruins across 141 countries,
+Castlemap atlas: castles, fortresses, palaces and ruins worldwide (the counts move with every release; `get_statistics` reports the current ones),
 with coordinates, founding dates, categories, fame ranking and Wikipedia
 summaries.
 
@@ -38,7 +38,7 @@ Registry entry: `com.thecastlemap/castles`.
 | `get_castle` | Full record for one castle |
 | `castles_near` | Nearest castles to a coordinate (haversine); geocode first |
 | `top_castles` | Best-known castles, by fame rank |
-| `list_countries` | The 141 countries, with counts |
+| `list_countries` | Every country on the map, with counts |
 | `get_statistics` | Live aggregates — totals, per-country, per-century |
 | `random_castle` | One castle at random |
 
